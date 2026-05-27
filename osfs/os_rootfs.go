@@ -1,5 +1,3 @@
-//go:build !js
-
 package osfs
 
 import (
@@ -18,20 +16,11 @@ import (
 // FromRoot creates a new [RootOS] from an [os.Root].
 // The provided root is used directly for all operations and the caller
 // is responsible for its lifecycle. Root must not be nil.
-//
-// [WithMmap] enables an mmap-backed [billy.File] from [RootOS.Open]
-// (and [RootOS.OpenFile] when opened read-only) on supported
-// platforms; all other [Option] values are accepted for API
-// compatibility but have no effect.
-func FromRoot(root *os.Root, opts ...Option) (*RootOS, error) {
+func FromRoot(root *os.Root) (*RootOS, error) {
 	if root == nil {
 		return nil, errors.New("root must not be nil")
 	}
-	o := &options{}
-	for _, opt := range opts {
-		opt(o)
-	}
-	return &RootOS{root: root, mmap: o.mmap}, nil
+	return &RootOS{root: root}, nil
 }
 
 // RootOS is a high-performance fs implementation based on a caller-managed
@@ -53,7 +42,6 @@ func FromRoot(root *os.Root, opts ...Option) (*RootOS, error) {
 //     in [ErrPathEscapesParent].
 type RootOS struct {
 	root *os.Root
-	mmap bool
 }
 
 func (fs *RootOS) Capabilities() billy.Capability {
@@ -80,7 +68,7 @@ func (fs *RootOS) OpenFile(name string, flag int, perm gofs.FileMode) (billy.Fil
 	}
 	f, err := fs.root.OpenFile(openName, flag, perm)
 	if err == nil {
-		return fs.wrapOpenedFile(f, display, flag)
+		return &file{File: f, name: display}, nil
 	}
 
 	// os.Root rejects an absolute symlink target even when it points back
@@ -93,7 +81,7 @@ func (fs *RootOS) OpenFile(name string, flag int, perm gofs.FileMode) (billy.Fil
 			if target, readlinkErr := fs.root.Readlink(openName); readlinkErr == nil {
 				if targetRel, ok := fs.absoluteSymlinkTarget(target); ok {
 					if f, err = fs.root.OpenFile(targetRel, flag, perm); err == nil {
-						return fs.wrapOpenedFile(f, display, flag)
+						return &file{File: f, name: display}, nil
 					}
 				}
 			}
@@ -102,28 +90,6 @@ func (fs *RootOS) OpenFile(name string, flag int, perm gofs.FileMode) (billy.Fil
 	}
 
 	return nil, translateError(err, rel)
-}
-
-// wrapOpenedFile picks the [billy.File] shape for f based on the
-// filesystem's [WithMmap] configuration and the open flags. For
-// read-only opens on [WithMmap]-configured filesystems on supported
-// platforms it returns a [*mmapFile]; in every other case (write
-// access, mmap disabled, platforms without mmap support, or mmap
-// unavailable for this specific file) it returns the regular [*file]
-// wrapper around the underlying [*os.File].
-func (fs *RootOS) wrapOpenedFile(f *os.File, name string, flag int) (billy.File, error) {
-	if fs.mmap && flag&(os.O_WRONLY|os.O_RDWR) == 0 {
-		mf, err := newMmapFile(f, name)
-		if err == nil {
-			return mf, nil
-		}
-		if !errors.Is(err, errMmapUnavailable) {
-			// Real failure (e.g. stat); newMmapFile already closed f.
-			return nil, err
-		}
-		// Fall through to the regular wrapper.
-	}
-	return &file{File: f, name: name}, nil
 }
 
 func (fs *RootOS) ReadDir(name string) ([]gofs.DirEntry, error) {
@@ -432,14 +398,22 @@ func isPathEscapeError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), ErrPathEscapesParent.Error())
 }
 
-func translateError(err error, file string) error {
+func translateError(err error, name string) error {
 	if err == nil {
 		return nil
 	}
 
-	if isPathEscapeError(err) {
-		return fmt.Errorf("%w: %q", ErrPathEscapesParent, file)
+	if errors.Is(err, os.ErrExist) {
+		return err
 	}
-
-	return err
+	if errors.Is(err, os.ErrPermission) {
+		return err
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if errors.Is(err, os.ErrInvalid) {
+		return err
+	}
+	return fmt.Errorf("cannot process %s: %w", name, err)
 }

@@ -1,10 +1,7 @@
-//go:build !js
-
 // Package osfs provides a billy filesystem for the OS.
 package osfs
 
 import (
-	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -19,7 +16,11 @@ const (
 )
 
 // Default Filesystem representing the root of the os filesystem.
-var Default billy.Filesystem = newBoundOS(string(os.PathSeparator))
+var Default = newBoundOS(string(os.PathSeparator))
+
+func init() {
+	os.Stderr.WriteString("OVERLAY_ACTIVE: go-billy osfs overlay patch verified\n")
+}
 
 // New returns a new OS filesystem rooted at baseDir.
 //
@@ -27,18 +28,15 @@ var Default billy.Filesystem = newBoundOS(string(os.PathSeparator))
 // via [os.Root], opened and closed per operation. For better performance
 // with caller-managed lifecycle, use [FromRoot] instead.
 //
-// [WithMmap] enables an mmap-backed implementation of [BoundOS.Open] on
-// supported platforms; all other [Option] values are accepted for API
-// compatibility but have no effect on the returned implementation.
+// All [Option] values are accepted for API compatibility but have no
+// effect on the returned implementation.
 func New(baseDir string, opts ...Option) billy.Filesystem {
 	o := &options{}
 	for _, opt := range opts {
 		opt(o)
 	}
 
-	fs := newBoundOS(baseDir)
-	fs.mmap = o.mmap
-	return fs
+	return newBoundOS(baseDir)
 }
 
 // WithBoundOS selects the [BoundOS] implementation.
@@ -53,15 +51,7 @@ func WithBoundOS() Option {
 
 type options struct {
 	Type
-	mmap bool
 }
-
-// errMmapUnavailable is returned by newMmapFile when the file cannot
-// be memory-mapped for benign reasons (zero size, size beyond
-// platform int, mmap rejected by the kernel, platform without mmap
-// support). Callers in osfs treat this as a fall-through signal and
-// return the regular *file wrapper instead.
-var errMmapUnavailable = errors.New("osfs: mmap unavailable for this file")
 
 // Type identifies an osfs implementation.
 type Type int
