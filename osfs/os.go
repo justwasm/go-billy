@@ -1,5 +1,3 @@
-//go:build !js
-
 // Package osfs provides a billy filesystem for the OS.
 package osfs
 
@@ -37,7 +35,7 @@ func New(baseDir string, opts ...Option) billy.Filesystem {
 	}
 
 	fs := newBoundOS(baseDir)
-	fs.mmap = o.mmap
+	fs.mmap = false
 	return fs
 }
 

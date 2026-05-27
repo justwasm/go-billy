@@ -1,5 +1,3 @@
-//go:build !js
-
 /*
    Copyright 2022 The Flux authors.
 
